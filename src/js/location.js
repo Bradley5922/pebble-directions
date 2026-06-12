@@ -131,6 +131,26 @@ function transitInstruction(step) {
   return cleanInstruction(text);
 }
 
+// Append the distance of a step to its instruction, so a bare "Turn right" becomes
+// "Turn right (200 m)" - it tells you how far to travel on that leg, which is the
+// single most useful thing when the road has no name.
+function withDistance(text, step) {
+  if (step && step.distance && step.distance.text) {
+    return text.concat(' (').concat(step.distance.text).concat(')');
+  }
+  return text;
+}
+
+// Very short steps that are not turns (e.g. "Head southeast (10 m)", "Take entrance 1")
+// are just noise. Collapse them: skip any non-turn maneuver under this many metres.
+var MIN_STEP_METERS = 25;
+function isNoiseStep(step) {
+  if (!step.distance || step.distance.value >= MIN_STEP_METERS) return false;
+  var m = step.maneuver || '';
+  var isTurn = m.indexOf('left') !== -1 || m.indexOf('right') !== -1 || m.indexOf('uturn') !== -1;
+  return !isTurn; // keep turns even when short, drop short "head/continue/entrance" steps
+}
+
 // Map a google directions step to one of the pebble icon chars
 function stepIcon(step, icons, mode) {
   // Transit steps (boarding a bus / train / tram) -> show the travel type icon
@@ -281,17 +301,18 @@ function loadRouteData(routeType, fromLat, fromLon, toLat, toLon, callback) {
         };
         leg.steps.forEach(function(step) {
           if (step.travel_mode === 'TRANSIT') {
-            // One card for the whole transit ride
+            // One card for the whole transit ride (already shows the stop count)
             pushStep(transitInstruction(step), step.start_location, stepIcon(step, icons, modes[routeType]));
           } else if (step.travel_mode === 'WALKING' && step.steps && step.steps.length) {
             // Expand a walking leg into its turn-by-turn sub-steps. In a transit journey
             // these are the walk to / from the stop, which google only details here.
             step.steps.forEach(function(sub) {
-              pushStep(cleanInstruction(sub.html_instructions), sub.start_location, stepIcon(sub, icons, modes[routeType]));
+              if (isNoiseStep(sub)) return;
+              pushStep(withDistance(cleanInstruction(sub.html_instructions), sub), sub.start_location, stepIcon(sub, icons, modes[routeType]));
             });
-          } else {
+          } else if (!isNoiseStep(step)) {
             // Driving / cycling / plain walking maneuver
-            pushStep(cleanInstruction(step.html_instructions), step.start_location, stepIcon(step, icons, modes[routeType]));
+            pushStep(withDistance(cleanInstruction(step.html_instructions), step), step.start_location, stepIcon(step, icons, modes[routeType]));
           }
         });
         // Append an explicit arrival step so the final flag has its own entry

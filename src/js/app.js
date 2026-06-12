@@ -201,12 +201,16 @@ function stopCurrentStepUpdates() {
   navigator.geolocation.clearWatch(routeData.watchId);
 }
 
-// Fetch a route from the here api and send it to the pebble
+// Fetch a route from the google api and send it to the pebble
 function fetchAndSendRoute(routeType, searchText, messageNumber) {
   // Log the recived data
   console.log('Route type:', routeType);
   console.log('Search text:', searchText);
-  // Convert the search text using the named addresses
+  // Voice dictation tends to append punctuation (e.g. "Work.") and may add
+  // surrounding whitespace - strip it so the text matches named addresses and
+  // geocodes cleanly.
+  searchText = searchText.replace(/^[\s.,!?;:'"-]+/, '').replace(/[\s.,!?;:'"-]+$/, '');
+  // Convert the search text using the named addresses (case-insensitive)
   config.getNamedAddresses().forEach(function(namedAddress) {
     if (namedAddress.name.toLowerCase() == searchText.toLowerCase()) {
       searchText = namedAddress.address;
