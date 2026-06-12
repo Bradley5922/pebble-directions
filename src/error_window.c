@@ -53,6 +53,36 @@ static void window_load() {
       icon_error = gbitmap_create_with_resource(RESOURCE_ID_ICON_ERROR_OTHER);
       text_error = "Currently unavailable";
       break;
+    // NoInternet
+    case 5:
+      icon_error = gbitmap_create_with_resource(RESOURCE_ID_ICON_ERROR_NETWORK);
+      text_error = "Phone has no internet";
+      break;
+    // NoGps
+    case 6:
+      icon_error = gbitmap_create_with_resource(RESOURCE_ID_ICON_ERROR_OTHER);
+      text_error = "No GPS position";
+      break;
+    // AddressNotFound
+    case 7:
+      icon_error = gbitmap_create_with_resource(RESOURCE_ID_ICON_ERROR_DICTATION);
+      text_error = "Address not found";
+      break;
+    // TooManySteps
+    case 8:
+      icon_error = gbitmap_create_with_resource(RESOURCE_ID_ICON_ERROR_API);
+      text_error = "Too many steps to show";
+      break;
+    // NoApiKey
+    case 9:
+      icon_error = gbitmap_create_with_resource(RESOURCE_ID_ICON_ERROR_API);
+      text_error = "Set API key in settings";
+      break;
+    // ApiKeyRejected
+    case 10:
+      icon_error = gbitmap_create_with_resource(RESOURCE_ID_ICON_ERROR_API);
+      text_error = "API key rejected";
+      break;
     // Other / Undefined
     default:
       icon_error = gbitmap_create_with_resource(RESOURCE_ID_ICON_ERROR_OTHER);

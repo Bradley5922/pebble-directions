@@ -8,7 +8,31 @@ function getGoogleApiKey() {
 }
 
 
-// Make a http request and return the recived json to the callback (callback params: success / json)
+// The error codes the watch understands (see the SETUP OVERVIEW in app.js)
+var errorCodes = {
+  noRoute: 1,
+  tooManySteps: 2,
+  noPosition: 3,
+  addressNotFound: 4,
+  noApiKey: 5,
+  keyRejected: 6,
+  noInternet: 7,
+};
+
+// Map a failed google response to an error code. The fallback is used for responses
+// that are valid but contain no result (e.g. ZERO_RESULTS), since what that means
+// depends on the request (address not found vs no route found).
+function classifyApiError(networkError, res, fallback) {
+  if (networkError) return errorCodes.noInternet;
+  if (res && (res.status === 'REQUEST_DENIED' || res.status === 'OVER_QUERY_LIMIT' || res.status === 'OVER_DAILY_LIMIT')) {
+    return errorCodes.keyRejected;
+  }
+  return fallback;
+}
+
+// Make a http request and return the recived json to the callback
+// (callback params: success / json / networkError - the last one is true when the
+// request itself failed, as opposed to a response that could not be parsed)
 function makeJsonHttpGetRequest(url, callback, logResponseText) {
   // Create a request
   var request = new XMLHttpRequest();
@@ -19,9 +43,9 @@ function makeJsonHttpGetRequest(url, callback, logResponseText) {
     // Send data to callback / error if json can not be parsed
     try {
       var data = JSON.parse(this.responseText);
-      callback(true, data);
+      callback(true, data, false);
     } catch (e) {
-      callback(false, null);
+      callback(false, null, false);
     }
     // Debugging helper stuff
     if (logResponseText) {
@@ -29,10 +53,10 @@ function makeJsonHttpGetRequest(url, callback, logResponseText) {
     }
   };
   request.onerror = function() {
-    callback(false, null);
+    callback(false, null, true);
   };
   request.ontimeout = function() {
-    callback(false, null);
+    callback(false, null, true);
   };
   // Fire the request
   request.open('GET', url);
@@ -156,7 +180,8 @@ function loadRegionBias(lat, lon, callback) {
   });
 }
 
-// Load a geolocation from google and return the found lat/lon to the callback (callback params: success / lat / lon)
+// Load a geolocation from google and return the found lat/lon to the callback
+// (callback params: success / lat / lon / errorCode - set when success is false)
 function loadLocationForSearch(searchText, currentLat, currentLon, callback) {
   // Bias the result towards a ~50 km box around the current position (mirrors the old 'prox' behaviour)
   var delta = 0.45;
@@ -174,7 +199,7 @@ function loadLocationForSearch(searchText, currentLat, currentLon, callback) {
         url = url.concat('&region=').concat(region);
       }
     // Perform an request
-    makeJsonHttpGetRequest(url, function(success, res) {
+    makeJsonHttpGetRequest(url, function(success, res, networkError) {
       if (success && res && res.status === 'OK') {
         // Success (will fail if expected fields are not available in response)
         try {
@@ -193,12 +218,12 @@ function loadLocationForSearch(searchText, currentLat, currentLon, callback) {
           });
           callback(true, best.lat, best.lng);
         } catch (e) {
-          callback(false, 0, 0);
+          callback(false, 0, 0, errorCodes.addressNotFound);
         }
       } else {
         // Error
         if (res) console.log('Geocode failed:', res.status);
-        callback(false, 0, 0);
+        callback(false, 0, 0, classifyApiError(networkError, res, errorCodes.addressNotFound));
       }
     });
   });
@@ -234,7 +259,7 @@ function loadRouteData(routeType, fromLat, fromLon, toLat, toLon, callback) {
     // Log the final url (for rare use)
     //console.log(url);
   // Perform the request
-  makeJsonHttpGetRequest(url, function(success, res) {
+  makeJsonHttpGetRequest(url, function(success, res, networkError) {
     if (success && res && res.status === 'OK') {
       // Success (will fail if expected fields are not available in response)
       try {
@@ -280,12 +305,12 @@ function loadRouteData(routeType, fromLat, fromLon, toLat, toLon, callback) {
         callback(true, routeData);
       } catch (e) {
         console.log(e);
-        routeErrorCallback(callback);
+        routeErrorCallback(callback, errorCodes.noRoute);
       }
     } else {
       // Error
       if (res) console.log('Directions failed:', res.status);
-      routeErrorCallback(callback);
+      routeErrorCallback(callback, classifyApiError(networkError, res, errorCodes.noRoute));
     }
   });
 }
@@ -295,30 +320,31 @@ function createRoute(routeType, searchText, callback) {
   // Make sure the user has configured a google api key on the settings page
   if (!getGoogleApiKey()) {
     console.log('No Google API key set - open the app settings on your phone and paste your key');
-    return routeErrorCallback(callback);
+    return routeErrorCallback(callback, errorCodes.noApiKey);
   }
   // Load the current location
   loadCurrentLocation(function(successCurrentLocation, fromLat, fromLon) {
     console.log('current found:', fromLat, fromLon);
     if (successCurrentLocation) {
       // Geocode the search term
-      loadLocationForSearch(searchText, fromLat, fromLon, function(successSearchLocation, toLat, toLon) {
+      loadLocationForSearch(searchText, fromLat, fromLon, function(successSearchLocation, toLat, toLon, searchErrorCode) {
         console.log('search found:', toLat, toLon);
         if (successSearchLocation) {
           // Load a route and pass it the callback (google handles every mode, transit included)
           loadRouteData(routeType, fromLat, fromLon, toLat, toLon, callback);
         } else {
-          routeErrorCallback(callback);
+          routeErrorCallback(callback, searchErrorCode);
         }
       });
     } else {
-      routeErrorCallback(callback);
+      routeErrorCallback(callback, errorCodes.noPosition);
     }
   }, true);
 }
 // Helper function to define createRoute error callback all in one place
-function routeErrorCallback(callback) {
-  callback(false, { distance: 0, time: 0, stepList: [], stepPositionList: [], stepIconsString: '' });
+// (the callback takes: success / route data / error code)
+function routeErrorCallback(callback, errorCode) {
+  callback(false, { distance: 0, time: 0, stepList: [], stepPositionList: [], stepIconsString: '' }, errorCode || errorCodes.noRoute);
 }
 
 // Calculates the distance of two sets of coordinates (in meters)

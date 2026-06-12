@@ -12,8 +12,10 @@
 *
 * About the success codes:
 * –––
-* 0 = Success; 1 = Route not found; 2 = Too many steps; 3 = No current position found; ...
+* 0 = Success; 1 = Route not found; 2 = Too many steps; 3 = No current position found;
+* 4 = Address not found; 5 = No api key set; 6 = Api key rejected; 7 = Phone has no internet
 * The code is send in the way of: code + messageNumber * messagePadding
+* (the codes must stay in the range 0-9, since messagePadding is 10!)
 *
 * About the recived message:
 * –––
@@ -115,7 +117,7 @@ function sendStepItem(stepList, index, messageNumber) {
   });
 }
 
-function sendRoute(success, distance, time, stepList, stepIconsString, messageNumber) {
+function sendRoute(success, distance, time, stepList, stepIconsString, messageNumber, errorCode) {
   // Send message to pebble if a route was found
   if (success && maxStepCount >= stepList.length) {
     // Build message
@@ -135,12 +137,12 @@ function sendRoute(success, distance, time, stepList, stepIconsString, messageNu
       // Error
       console.log('Transmission failed at [OVERVIEW]');
     });
-  } else if (maxStepCount < stepList.length) {
+  } else if (success && maxStepCount < stepList.length) {
     // Too many steps error
     sendSuccess(2, messageNumber);
   } else {
-    // Send error message (route not found)
-    sendSuccess(1, messageNumber);
+    // Send the specific error code reported by the location service (fallback: route not found)
+    sendSuccess(errorCode || 1, messageNumber);
   }
 }
 
@@ -211,12 +213,12 @@ function fetchAndSendRoute(routeType, searchText, messageNumber) {
       console.log('Search text was named address:', searchText);
     }
   });
-  // Load a route from here api. Data format: { distance, time, stepList[string], stepIconsString }
-  locationService.createRoute(routeType, searchText, function(success, data) {
+  // Load a route from the google api. Data format: { distance, time, stepList[string], stepIconsString }
+  locationService.createRoute(routeType, searchText, function(success, data, errorCode) {
     // Log the route data
-    console.log('Will send:', success, data.distance, data.time, data.stepList.length, data.stepIconsString, messageNumber);
+    console.log('Will send:', success, data.distance, data.time, data.stepList.length, data.stepIconsString, messageNumber, 'error code:', errorCode);
     // Send the route data to the watch
-    sendRoute(success, data.distance, data.time, data.stepList, data.stepIconsString, messageNumber);
+    sendRoute(success, data.distance, data.time, data.stepList, data.stepIconsString, messageNumber, errorCode);
     // If the loading was successfull, start watching the position if the route type is bike or walk
     if (success && (routeType == 1 || routeType == 3)) {
       startCurrentStepUpdates(data.stepPositionList);

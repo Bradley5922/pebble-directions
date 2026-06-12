@@ -179,9 +179,29 @@ static void app_message_inbox_recived_callback(DictionaryIterator *iter, void *c
         case 1:
           window_display_error(Api);
           break;
-        // Too many steps (== route not found error)
+        // Too many steps on the route
         case 2:
-          window_display_error(Api);
+          window_display_error(TooManySteps);
+          break;
+        // The phone could not determine the current position
+        case 3:
+          window_display_error(NoGps);
+          break;
+        // The searched address was not found
+        case 4:
+          window_display_error(AddressNotFound);
+          break;
+        // No google api key was entered on the settings page
+        case 5:
+          window_display_error(NoApiKey);
+          break;
+        // Google rejected the api key (bad key / quota / api not enabled)
+        case 6:
+          window_display_error(ApiKeyRejected);
+          break;
+        // The phone could not reach the internet
+        case 7:
+          window_display_error(NoInternet);
           break;
         default:
           window_display_error(Other);
