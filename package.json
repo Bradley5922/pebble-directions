@@ -9,7 +9,7 @@
   ],
   "private": true,
   "dependencies": {
-    "pebble-clay": "^1.0.1"
+    "@rebble/clay": "^1.0.10"
   },
   "pebble": {
     "displayName": "Directions",

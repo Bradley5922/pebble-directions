@@ -87,7 +87,7 @@ function getNamedAddresses() {
 
 
 // Clay things
-var Clay = require('pebble-clay');
+var Clay = require('@rebble/clay');
 var clayConfig = require('./clayConfig.js');
 var clay = new Clay(clayConfig, null, { autoHandleEvents: false });
 
