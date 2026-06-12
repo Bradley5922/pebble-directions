@@ -307,11 +307,12 @@ function loadRouteData(routeType, fromLat, fromLon, toLat, toLon, callback) {
             // Expand a walking leg into its turn-by-turn sub-steps. In a transit journey
             // these are the walk to / from the stop, which google only details here.
             step.steps.forEach(function(sub) {
-              if (isNoiseStep(sub)) return;
+              // Keep the very first step (it sets your starting direction), collapse later noise
+              if (isNoiseStep(sub) && routeData.stepList.length > 0) return;
               pushStep(withDistance(cleanInstruction(sub.html_instructions), sub), sub.start_location, stepIcon(sub, icons, modes[routeType]));
             });
-          } else if (!isNoiseStep(step)) {
-            // Driving / cycling / plain walking maneuver
+          } else if (!isNoiseStep(step) || routeData.stepList.length === 0) {
+            // Driving / cycling / plain walking maneuver (the first step is always kept)
             pushStep(withDistance(cleanInstruction(step.html_instructions), step), step.start_location, stepIcon(step, icons, modes[routeType]));
           }
         });
