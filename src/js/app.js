@@ -77,11 +77,26 @@ function sendSuccess(code, messageNumber) {
   });
 }
 
+// Truncate a string so its utf-8 representation fits the step buffer on the watch.
+// The watch buffer is maxStepStringLength BYTES including the null terminator, while
+// substr counts characters - non-ascii characters take several bytes each!
+function truncateForWatch(text) {
+  var maxBytes = maxStepStringLength - 1; /* leave room for the null terminator */
+  // Drop lone surrogates, they can not be utf-8 encoded
+  text = text.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '$1');
+  // Remove characters from the end until the byte length fits (encodeURIComponent escapes
+  // each non-ascii byte as '%XX', so replacing those with one char counts the bytes)
+  while (encodeURIComponent(text).replace(/%[0-9A-Fa-f]{2}/g, '.').length > maxBytes) {
+    text = text.substr(0, text.length - 1);
+  }
+  return text;
+}
+
 function sendStepItem(stepList, index, messageNumber) {
   // Build message
   var key = keys.INSTRUCTION_LIST;
   var dict = {};
-  dict[key] = stepList[index].substr(0, maxStepStringLength);
+  dict[key] = truncateForWatch(stepList[index]);
 
   // Send message to pebble
   Pebble.sendAppMessage(dict, function() {

@@ -68,7 +68,9 @@ function loadCurrentLocation(callback, retry) {
   );
 }
 
-// Strip the html markup google returns in its instructions and decode the few entities it uses
+// Strip the html markup google returns in its instructions and decode the few entities it uses.
+// Also normalises typographic unicode (curly quotes, dashes) to ascii, since the
+// pebble system fonts can not render those characters and would show boxes.
 function cleanInstruction(text) {
   if (!text) return '';
   return text
@@ -81,6 +83,11 @@ function cleanInstruction(text) {
     .replace(/&gt;/gi, '>')
     .replace(/&#39;/g, "'")
     .replace(/&quot;/gi, '"')
+    .replace(/[‘’ʼ]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/[–—]/g, '-')
+    .replace(/…/g, '...')
+    .replace(/→/g, ' to ')
     .replace(/\s+/g, ' ')                /* collapse whitespace */
     .replace(/^\s+|\s+$/g, '');          /* trim */
 }
@@ -96,13 +103,16 @@ function transitInstruction(step) {
   if (td.departure_stop && td.departure_stop.name) text = text.concat('. Board at ').concat(td.departure_stop.name);
   if (td.arrival_stop && td.arrival_stop.name) text = text.concat(', exit at ').concat(td.arrival_stop.name);
   if (td.num_stops) text = text.concat(' (').concat(td.num_stops).concat(' stops)');
-  return text;
+  // Run through the cleaner, stop names can contain typographic unicode too
+  return cleanInstruction(text);
 }
 
 // Map a google directions step to one of the pebble icon chars
-function stepIcon(step, icons) {
+function stepIcon(step, icons, mode) {
   // Transit steps (boarding a bus / train / tram) -> show the travel type icon
   if (step.travel_mode === 'TRANSIT') return icons.type;
+  // Walking sections of a transit route get the forward arrow (the type icon would show a train)
+  if (mode === 'transit' && step.travel_mode === 'WALKING') return icons.forward;
   // Turn-by-turn manoeuvre (may be missing on the first / straight steps)
   var m = step.maneuver;
   if (m) {
@@ -115,33 +125,82 @@ function stepIcon(step, icons) {
   return icons.type;
 }
 
+// Determine the ccTLD region code of the current country (e.g. 'uk') and cache it on the
+// phone. The region is used to bias the geocoder, so that e.g. searching 'Cambridge' from
+// London finds Cambridge UK and not Cambridge Massachusetts. (callback param: region or '')
+function loadRegionBias(lat, lon, callback) {
+  // Use the cached region if we have not moved far (country changes are rare)
+  try {
+    var cache = JSON.parse(localStorage.getItem('regionBias'));
+    if (cache && typeof cache.region === 'string' && getApproxDistance(lat, lon, cache.lat, cache.lon) < 100000) {
+      return callback(cache.region);
+    }
+  } catch (e) {}
+  // Reverse geocode the current position to country level
+  var url = 'https://maps.googleapis.com/maps/api/geocode/json?key=';
+    url = url.concat(getGoogleApiKey());
+    url = url.concat('&latlng=').concat(lat).concat(',').concat(lon);
+    url = url.concat('&result_type=country');
+  makeJsonHttpGetRequest(url, function(success, res) {
+    var region = '';
+    try {
+      if (success && res.status === 'OK') {
+        var iso = res.results[0].address_components[0].short_name;
+        // The region param wants ccTLDs, which mostly match the iso codes (the UK is the notable exception)
+        region = iso === 'GB' ? 'uk' : iso.toLowerCase();
+        localStorage.setItem('regionBias', JSON.stringify({ lat: lat, lon: lon, region: region }));
+      }
+    } catch (e) {}
+    // Never fail here, the region is only a nice-to-have bias
+    callback(region);
+  });
+}
+
 // Load a geolocation from google and return the found lat/lon to the callback (callback params: success / lat / lon)
 function loadLocationForSearch(searchText, currentLat, currentLon, callback) {
   // Bias the result towards a ~50 km box around the current position (mirrors the old 'prox' behaviour)
   var delta = 0.45;
-  // Create the url
-  var url = 'https://maps.googleapis.com/maps/api/geocode/json?key=';
-    url = url.concat(getGoogleApiKey());
-    url = url.concat('&address=').concat(encodeURIComponent(searchText));
-    url = url.concat('&bounds=')
-             .concat(currentLat - delta).concat(',').concat(currentLon - delta)
-             .concat('|')
-             .concat(currentLat + delta).concat(',').concat(currentLon + delta);
-  // Perform an request
-  makeJsonHttpGetRequest(url, function(success, res) {
-    if (success && res && res.status === 'OK') {
-      // Success (will fail if expected fields are not available in response)
-      try {
-        var location = res.results[0].geometry.location;
-        callback(true, location.lat, location.lng);
-      } catch (e) {
+  // Determine the country we are in to further bias the search
+  loadRegionBias(currentLat, currentLon, function(region) {
+    // Create the url
+    var url = 'https://maps.googleapis.com/maps/api/geocode/json?key=';
+      url = url.concat(getGoogleApiKey());
+      url = url.concat('&address=').concat(encodeURIComponent(searchText));
+      url = url.concat('&bounds=')
+               .concat(currentLat - delta).concat(',').concat(currentLon - delta)
+               .concat('%7C') /* url encoded '|' */
+               .concat(currentLat + delta).concat(',').concat(currentLon + delta);
+      if (region) {
+        url = url.concat('&region=').concat(region);
+      }
+    // Perform an request
+    makeJsonHttpGetRequest(url, function(success, res) {
+      if (success && res && res.status === 'OK') {
+        // Success (will fail if expected fields are not available in response)
+        try {
+          // Google may return several matches, pick the one closest to the current position
+          var best = null;
+          var bestDistance = -1;
+          res.results.forEach(function(result) {
+            try {
+              var location = result.geometry.location;
+              var distance = getApproxDistance(currentLat, currentLon, location.lat, location.lng);
+              if (best === null || distance < bestDistance) {
+                best = location;
+                bestDistance = distance;
+              }
+            } catch (e) {}
+          });
+          callback(true, best.lat, best.lng);
+        } catch (e) {
+          callback(false, 0, 0);
+        }
+      } else {
+        // Error
+        if (res) console.log('Geocode failed:', res.status);
         callback(false, 0, 0);
       }
-    } else {
-      // Error
-      if (res) console.log('Geocode failed:', res.status);
-      callback(false, 0, 0);
-    }
+    });
   });
 }
 
@@ -191,18 +250,21 @@ function loadRouteData(routeType, fromLat, fromLon, toLat, toLon, callback) {
         routeData.stepIconsString = '';
         leg.steps.forEach(function(step) {
           // Add the text (use transit_details for public transport steps)
+          var instruction;
           if (step.travel_mode === 'TRANSIT') {
-            routeData.stepList.push(transitInstruction(step));
+            instruction = transitInstruction(step);
           } else {
-            routeData.stepList.push(cleanInstruction(step.html_instructions));
+            instruction = cleanInstruction(step.html_instructions);
           }
+          // Never send an empty string to the watch (it would show a blank card)
+          routeData.stepList.push(instruction || 'Continue');
           // Add the position (start of the step)
           routeData.stepPositionList.push({
             lat: step.start_location.lat,
             lon: step.start_location.lng,
           });
           // Add the icon
-          routeData.stepIconsString = routeData.stepIconsString.concat(stepIcon(step, icons));
+          routeData.stepIconsString = routeData.stepIconsString.concat(stepIcon(step, icons, modes[routeType]));
         });
         // Append an explicit arrival step so the final flag has its own entry
         routeData.stepList.push('Arrive at '.concat(cleanInstruction(leg.end_address)));
@@ -271,7 +333,7 @@ function getApproxDistance(fromLat, fromLon, toLat, toLon) {
 // Determine the current waypoint index, based on a list of waypoint coords [{lat,lon},...], the current position, and the current index
 function getCurrentStepIndex(steps, lat, lon, accuracy, currentIndex) {
   // Test if the accuracy is good enought
-  if (accuracy > 50) return currentIndex === 'number' ? currentIndex : 0;
+  if (accuracy > 50) return typeof currentIndex === 'number' ? currentIndex : 0;
   // Determine the current step
   try {
     // Determine the max distance
