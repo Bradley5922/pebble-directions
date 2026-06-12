@@ -1,5 +1,5 @@
 #include <pebble.h>
-#include <select_window.h>
+#include "select_window.h"
 
 static void init(void) {
   // Open the transit mode window
