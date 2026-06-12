@@ -5,7 +5,7 @@
 * –––
 * (1) Overview data is send (distance, time needed)
 * (2) Step icon data is send as a 20 char string (each char encodes one icon!)
-* (3) Step data array is send (each step string, max 40 entrys) -> THE LAST SEND INDEX + 1 IS THE LENGTH!
+* (3) Step data array is send (each step string, max 100 entrys) -> THE LAST SEND INDEX + 1 IS THE LENGTH!
 * (4) Success value is send (terminates the transmittion; it's true/false
 *   value determines whether the transmition was successfull or not (E.g.
 *   if false is send as the success first, no route was found)
@@ -45,7 +45,7 @@
 
 // Data keys
 var keys = require('message_keys');
-var maxStepCount = 40;
+var maxStepCount = 100;
 var maxStepStringLength = 128;
 var currentMessageNumber = 0;
 var messagePadding = 10;

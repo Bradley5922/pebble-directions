@@ -5,7 +5,7 @@ int selected_type_enum;
 
 
 #define MESSAGE_PADDING 10
-#define MAX_STEP_COUNT 40
+#define MAX_STEP_COUNT 100
 #define MAX_STEP_CHARS 128
 #define ADDRESS_MAX_CHARS 128
 

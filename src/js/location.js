@@ -135,9 +135,7 @@ function transitInstruction(step) {
 function stepIcon(step, icons, mode) {
   // Transit steps (boarding a bus / train / tram) -> show the travel type icon
   if (step.travel_mode === 'TRANSIT') return icons.type;
-  // Walking sections of a transit route get the forward arrow (the type icon would show a train)
-  if (mode === 'transit' && step.travel_mode === 'WALKING') return icons.forward;
-  // Turn-by-turn manoeuvre (may be missing on the first / straight steps)
+  // Turn-by-turn manoeuvre takes priority (may be missing on the first / straight steps)
   var m = step.maneuver;
   if (m) {
     if (m.indexOf('uturn') !== -1) return m.indexOf('right') !== -1 ? icons.uRight : icons.uLeft;
@@ -145,7 +143,9 @@ function stepIcon(step, icons, mode) {
     if (m.indexOf('right') !== -1) return icons.right;
     if (m === 'straight' || m.indexOf('merge') !== -1 || m.indexOf('ramp') !== -1) return icons.forward;
   }
-  // No useful manoeuvre -> show the travel type icon
+  // No manoeuvre: a walking section of a transit route gets the forward arrow
+  // (the travel type icon would show a train), everything else the type icon.
+  if (mode === 'transit' && step.travel_mode === 'WALKING') return icons.forward;
   return icons.type;
 }
 
@@ -273,23 +273,26 @@ function loadRouteData(routeType, fromLat, fromLon, toLat, toLon, callback) {
         routeData.stepList = [];
         routeData.stepPositionList = [];
         routeData.stepIconsString = '';
-        leg.steps.forEach(function(step) {
-          // Add the text (use transit_details for public transport steps)
-          var instruction;
-          if (step.travel_mode === 'TRANSIT') {
-            instruction = transitInstruction(step);
-          } else {
-            instruction = cleanInstruction(step.html_instructions);
-          }
-          // Never send an empty string to the watch (it would show a blank card)
+        // Append one rendered step to the route (never an empty card)
+        var pushStep = function(instruction, loc, icon) {
           routeData.stepList.push(instruction || 'Continue');
-          // Add the position (start of the step)
-          routeData.stepPositionList.push({
-            lat: step.start_location.lat,
-            lon: step.start_location.lng,
-          });
-          // Add the icon
-          routeData.stepIconsString = routeData.stepIconsString.concat(stepIcon(step, icons, modes[routeType]));
+          routeData.stepPositionList.push({ lat: loc.lat, lon: loc.lng });
+          routeData.stepIconsString = routeData.stepIconsString.concat(icon);
+        };
+        leg.steps.forEach(function(step) {
+          if (step.travel_mode === 'TRANSIT') {
+            // One card for the whole transit ride
+            pushStep(transitInstruction(step), step.start_location, stepIcon(step, icons, modes[routeType]));
+          } else if (step.travel_mode === 'WALKING' && step.steps && step.steps.length) {
+            // Expand a walking leg into its turn-by-turn sub-steps. In a transit journey
+            // these are the walk to / from the stop, which google only details here.
+            step.steps.forEach(function(sub) {
+              pushStep(cleanInstruction(sub.html_instructions), sub.start_location, stepIcon(sub, icons, modes[routeType]));
+            });
+          } else {
+            // Driving / cycling / plain walking maneuver
+            pushStep(cleanInstruction(step.html_instructions), step.start_location, stepIcon(step, icons, modes[routeType]));
+          }
         });
         // Append an explicit arrival step so the final flag has its own entry
         routeData.stepList.push('Arrive at '.concat(cleanInstruction(leg.end_address)));
