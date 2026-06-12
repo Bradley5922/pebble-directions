@@ -1,5 +1,8 @@
 #include "directions_window.h"
 
+// The single definition of the transport type selected by the user (declared extern in the header)
+int selected_type_enum;
+
 
 #define MESSAGE_PADDING 10
 #define MAX_STEP_COUNT 40

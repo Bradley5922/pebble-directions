@@ -16,6 +16,7 @@ enum SelectedType {
   Walk = 3
 };
 
-int selected_type_enum;
+// The transport type currently selected by the user (defined in directions_window.c)
+extern int selected_type_enum;
 
 void directions_window_push();
