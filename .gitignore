@@ -8,6 +8,3 @@ dist.zip
 
 # Ignore installed node modules
 node_modules/
-
-# Ignore the apiKeys.js file
-src/js/apiKeys.js

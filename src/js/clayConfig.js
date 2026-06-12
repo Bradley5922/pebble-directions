@@ -1,5 +1,31 @@
 // The config page (without the already stored name / addess pairs)
 module.exports = [
+  // The google api key section
+  {
+    type: 'section',
+    items: [
+      // Description
+      {
+        type: 'heading',
+        defaultValue: 'Google API key',
+      },
+      {
+        type: 'text',
+        defaultValue: 'This app needs your own free Google Maps Platform API key to look up addresses and routes (including public transport). Follow the <a href="https://github.com/Bradley5922/pebble-directions#setting-up-your-google-api-key">setup instructions</a> to create one, then paste it below.<br style="display:block">The key is kept on your phone and is only sent to Google when you request directions.',
+      },
+      {
+        type: 'input',
+        messageKey: 'googleApiKey',
+        label: 'API key',
+        description: 'Paste your Google Maps Platform API key here.',
+        attributes: {
+          placeholder: 'AIza...',
+          limit: 120,
+        },
+      },
+    ],
+  },
+
   // The named addessses section
   {
     type: 'section',
@@ -130,7 +156,7 @@ module.exports = [
       },
       {
         type: 'text',
-        defaultValue: 'The data is provided by the HERE API (https://developer.here.com). Directions for public transit are powered by MapQuest (https://developer.mapquest.com).',
+        defaultValue: 'Directions data, including public transport, is provided by the Google Directions API (https://developers.google.com/maps/documentation/directions).',
       },
     ],
   },

@@ -42,6 +42,16 @@ function storeNamedAddresses(configDict) {
   } catch (e) {}
 }
 
+// Store the google api key entered on the settings page
+function storeApiKey(configDict) {
+  try {
+    if (configDict.hasOwnProperty('googleApiKey') && configDict.googleApiKey && typeof configDict.googleApiKey.value === 'string') {
+      // Trim and store (location.js reads this back at request time)
+      localStorage.setItem('googleApiKey', configDict.googleApiKey.value.replace(/^\s+/, '').replace(/\s+$/, ''));
+    }
+  } catch (e) {}
+}
+
 // Get the named addresses data (exposed)
 function getNamedAddresses() {
   // Load the stored data
@@ -94,9 +104,10 @@ Pebble.addEventListener('webviewclosed', function(e) {
     return;
   }
 
-  // Store the addresses returned by the config page
+  // Store the settings returned by the config page
   var configDict = clay.getSettings(e.response, false);
   storeNamedAddresses(configDict);
+  storeApiKey(configDict);
 });
 
 

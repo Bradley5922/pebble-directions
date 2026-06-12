@@ -1,6 +1,11 @@
-// Api keys
-var hereApiKey = require('./apiKeys.js').hereApiKey;
-var mapQuestKey = require('./apiKeys.js').mapQuestKey;
+// The google api key is configured by the user on the settings page and stored on the phone
+function getGoogleApiKey() {
+  try {
+    return localStorage.getItem('googleApiKey') || '';
+  } catch (e) {
+    return '';
+  }
+}
 
 
 // Make a http request and return the recived json to the callback (callback params: success / json)
@@ -41,7 +46,7 @@ function loadCurrentLocation(callback, retry) {
     function(pos) {
       try {
         //callback(true, 52.5, 13.4); /* THIS IS FOR DEMO / SCREENSHOTS IN THE EMULATOR */
-        if (pos.coords.accuracy <= 100 || retry !== true) {
+        if (pos.coords.accuracy <= 100 || retry !== true) {
           // Accuracy is good, use this location OR we should not retry!
           callback(true, pos.coords.latitude, pos.coords.longitude);
         } else if (retry === true) {
@@ -63,37 +68,87 @@ function loadCurrentLocation(callback, retry) {
   );
 }
 
-// Load a geolocation from here and return the found lon/lat to the callback (callback params: success / lat / lon)
+// Strip the html markup google returns in its instructions and decode the few entities it uses
+function cleanInstruction(text) {
+  if (!text) return '';
+  return text
+    .replace(/<\/div>/gi, '')            /* div close -> nothing */
+    .replace(/<div[^>]*>/gi, '. ')       /* div open  -> sentence break (google appends extra info in a div) */
+    .replace(/<[^>]+>/g, '')             /* drop any remaining tags */
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/\s+/g, ' ')                /* collapse whitespace */
+    .replace(/^\s+|\s+$/g, '');          /* trim */
+}
+
+// Build a readable instruction for a public transport step using the transit_details google provides
+function transitInstruction(step) {
+  var td = step.transit_details;
+  if (!td) return cleanInstruction(step.html_instructions);
+  var line = td.line || {};
+  var name = line.short_name || line.name || (line.vehicle && line.vehicle.name) || 'Transit';
+  var text = name;
+  if (td.headsign) text = text.concat(' towards ').concat(td.headsign);
+  if (td.departure_stop && td.departure_stop.name) text = text.concat('. Board at ').concat(td.departure_stop.name);
+  if (td.arrival_stop && td.arrival_stop.name) text = text.concat(', exit at ').concat(td.arrival_stop.name);
+  if (td.num_stops) text = text.concat(' (').concat(td.num_stops).concat(' stops)');
+  return text;
+}
+
+// Map a google directions step to one of the pebble icon chars
+function stepIcon(step, icons) {
+  // Transit steps (boarding a bus / train / tram) -> show the travel type icon
+  if (step.travel_mode === 'TRANSIT') return icons.type;
+  // Turn-by-turn manoeuvre (may be missing on the first / straight steps)
+  var m = step.maneuver;
+  if (m) {
+    if (m.indexOf('uturn') !== -1) return m.indexOf('right') !== -1 ? icons.uRight : icons.uLeft;
+    if (m.indexOf('left') !== -1) return icons.left;
+    if (m.indexOf('right') !== -1) return icons.right;
+    if (m === 'straight' || m.indexOf('merge') !== -1 || m.indexOf('ramp') !== -1) return icons.forward;
+  }
+  // No useful manoeuvre -> show the travel type icon
+  return icons.type;
+}
+
+// Load a geolocation from google and return the found lat/lon to the callback (callback params: success / lat / lon)
 function loadLocationForSearch(searchText, currentLat, currentLon, callback) {
+  // Bias the result towards a ~50 km box around the current position (mirrors the old 'prox' behaviour)
+  var delta = 0.45;
   // Create the url
-  var url = 'https://geocoder.ls.hereapi.com/6.2/geocode.json?apiKey=';
-    url = url.concat(hereApiKey);
-    url = url.concat('&gen=9'); /*don't break on here api update*/
-    url = url.concat('&searchtext=').concat(encodeURI(searchText.split(' ').join('+')));
-    url = url.concat('&prox=').concat(currentLat).concat(',').concat(currentLon).concat(',50000'); /* favour results within 50 km range */
+  var url = 'https://maps.googleapis.com/maps/api/geocode/json?key=';
+    url = url.concat(getGoogleApiKey());
+    url = url.concat('&address=').concat(encodeURIComponent(searchText));
+    url = url.concat('&bounds=')
+             .concat(currentLat - delta).concat(',').concat(currentLon - delta)
+             .concat('|')
+             .concat(currentLat + delta).concat(',').concat(currentLon + delta);
   // Perform an request
   makeJsonHttpGetRequest(url, function(success, res) {
-    if (success) {
+    if (success && res && res.status === 'OK') {
       // Success (will fail if expected fields are not available in response)
       try {
-        var foundLat = res.Response.View[0].Result[0].Location.NavigationPosition[0].Latitude;
-        var foundLon = res.Response.View[0].Result[0].Location.NavigationPosition[0].Longitude;
-        //callback(true, 52.5, 13.45); /* THIS IS FOR DEMO / SCREENSHOTS IN THE EMULATOR (add 'Schleusenufer' on watch as address string) */
-        callback(true, foundLat, foundLon);
+        var location = res.results[0].geometry.location;
+        callback(true, location.lat, location.lng);
       } catch (e) {
         callback(false, 0, 0);
       }
     } else {
       // Error
+      if (res) console.log('Geocode failed:', res.status);
       callback(false, 0, 0);
     }
   });
 }
 
-// Load a route from here and return the pebble-app conform data to the callback (callback params: success / data)
+// Load a route from google and return the pebble-app conform data to the callback (callback params: success / data)
 function loadRouteData(routeType, fromLat, fromLon, toLat, toLon, callback) {
-  // Transport modes, mapped to pebble ids
-  var modes = ['car', 'bicycle', 'publicTransport', 'pedestrian'];
+  // Transport modes, mapped to pebble ids (0 = car, 1 = bike, 2 = train/transit, 3 = walk)
+  var modes = ['driving', 'bicycling', 'transit', 'walking'];
   // Pebble direction icons, mapped to pebble ids (type = show nav type icon, attr = show attribution icon)
   var icons = {
     type: 'a',
@@ -105,176 +160,60 @@ function loadRouteData(routeType, fromLat, fromLon, toLat, toLon, callback) {
     attr: 'g',
     final: 'h',
   };
-  // Maps the direction retrived from here api to icon name
-  var directionMap = {
-    forward: 'forward',
-    bearRight: 'right', lightRight: 'right', right: 'right', hardRight: 'right',
-    bearLeft: 'left', lightLeft: 'left', left: 'left', hardLeft: 'left',
-    uTurnRight: 'uRight',
-    uTurnLeft: 'uLeft',
-  };
 
   // Create the url
-  var url = 'https://route.ls.hereapi.com/routing/7.2/calculateroute.json?apiKey=';
-    url = url.concat(hereApiKey);
-    url = url.concat('&gen=9'); /*don't break on here api update*/
-    url = url.concat('&waypoint0=geo!').concat(fromLat).concat(',').concat(fromLon);
-    url = url.concat('&waypoint1=geo!').concat(toLat).concat(',').concat(toLon);
-    url = url.concat('&mode=fastest;').concat(modes[routeType]); /* selectes the transit method, e.g. teleportation / car / ... */
-    if (modes[routeType] == 'publicTransport') {
-      // Special url params for public transport routes
-      url = url.concat('&departure=now&combineChange=true');
+  var url = 'https://maps.googleapis.com/maps/api/directions/json?key=';
+    url = url.concat(getGoogleApiKey());
+    url = url.concat('&origin=').concat(fromLat).concat(',').concat(fromLon);
+    url = url.concat('&destination=').concat(toLat).concat(',').concat(toLon);
+    url = url.concat('&mode=').concat(modes[routeType]);
+    url = url.concat('&units=metric');
+    if (modes[routeType] === 'transit') {
+      // Depart now for public transport routes
+      url = url.concat('&departure_time=now');
     }
-    // Format the response
-    url = url.concat('&routeattributes=none,summary,legs&routelegattributes=none,maneuvers&maneuverattributes=none,direction,position&instructionformat=text');
     // Log the final url (for rare use)
     //console.log(url);
   // Perform the request
   makeJsonHttpGetRequest(url, function(success, res) {
-    if (success) {
+    if (success && res && res.status === 'OK') {
       // Success (will fail if expected fields are not available in response)
       try {
-        // Our route data will go here. Format: { distance, time, stepList[string], stepIconsString[int] }
+        // Our route data will go here. Format: { distance, time, stepList[string], stepIconsString[char] }
         var routeData = {};
+        var leg = res.routes[0].legs[0];
         // Get the summary
-        routeData.distance = res.response.route[0].summary.distance; /* in meters */
-        routeData.time = Math.ceil(res.response.route[0].summary.travelTime / 60); /* in minutes */
+        routeData.distance = leg.distance.value; /* in meters */
+        routeData.time = Math.ceil(leg.duration.value / 60); /* in minutes */
         // Get the steps
         routeData.stepList = [];
         routeData.stepPositionList = [];
         routeData.stepIconsString = '';
-        res.response.route[0].leg[0].maneuver.forEach(function(step, index) {
-          // Add the text
-          routeData.stepList[index] = step.instruction;
-          // Add the position
-          routeData.stepPositionList[index] = {
-            lat: step.position.latitude,
-            lon: step.position.longitude,
-          };
-          // Add the icon
-          if (res.response.route[0].leg[0].maneuver.length == index + 1) {
-            // This is the last step, add the finished icon
-            routeData.stepIconsString = routeData.stepIconsString.concat(icons['final']);
-          } else if (step.hasOwnProperty('direction')) {
-            // Display the specified icon
-            if (directionMap.hasOwnProperty(step.direction)) {
-              routeData.stepIconsString = routeData.stepIconsString.concat(icons[directionMap[step.direction]]);
-            } else {
-              // Display the travel type icon
-              routeData.stepIconsString = routeData.stepIconsString.concat(icons['type']);
-            }
+        leg.steps.forEach(function(step) {
+          // Add the text (use transit_details for public transport steps)
+          if (step.travel_mode === 'TRANSIT') {
+            routeData.stepList.push(transitInstruction(step));
           } else {
-            // Display the travel type icon
-            routeData.stepIconsString = routeData.stepIconsString.concat(icons['type']);
+            routeData.stepList.push(cleanInstruction(step.html_instructions));
           }
-        });
-        // Test for attribution
-        if (res.response.hasOwnProperty('sourceAttribution')) {
-          // Add attribution text as last list entry, removing all html markup from it
-          routeData.stepList.push(res.response.sourceAttribution.attribution.replace(/<.+?>/g, ''));
-          routeData.stepIconsString = routeData.stepIconsString.concat(icons['attr']);
-        }
-        // We are done
-        callback(true, routeData);
-      } catch (e) {
-        routeErrorCallback(callback);
-      }
-    } else {
-      // Error
-      routeErrorCallback(callback);
-    }
-  });
-}
-
-// Load a route from the MapQuest PublicTransit API
-function loadPublicTransitRouteData(fromLat, fromLon, toLat, toLon, callback) {
-  // Pebble direction icons, mapped to pebble ids (type = show nav type icon, attr = show attribution icon)
-  var icons = {
-    type: 'a',
-    forward: 'b',
-    right: 'c',
-    left: 'd',
-    uRight: 'e',
-    uLeft: 'f',
-    attr: 'g',
-    final: 'h',
-  };
-  // Maps the direction retrived from here api to icon name (-1 == final)
-  var directionMap = [
-    'forward',
-    'right',
-    'right',
-    'right',
-    'uRight',
-    'left',
-    'left',
-    'left',
-    'uRight',
-    'uLeft',
-    'right',
-    'left',
-    'right',
-    'left',
-    'right',
-    'left',
-    'right',
-    'left',
-    'forward',
-    'type',
-    'type',
-    'type',
-    'type'
-  ];
-
-  // Create the url
-  var url = 'http://www.mapquestapi.com/directions/v2/route?key=';
-    url = url.concat(mapQuestKey);
-    url = url.concat('&from=').concat(fromLat).concat(',').concat(fromLon);
-    url = url.concat('&to=').concat(toLat).concat(',').concat(toLon);
-    url = url.concat('&routeType=multimodal&maxWalkingDistance=500&timeType=1')
-    // Format the response
-    url = url.concat('&unit=k&doReverseGeocode=false&narrativeType=text&locale=en_US&outFormat=json');
-    // Log the final url (for rare use)
-    //console.log(url);
-  // Perform the request
-  makeJsonHttpGetRequest(url, function(success, res) {
-    if (success) {
-      // Success (will fail if expected fields are not available in response)
-      try {
-        // Our route data will go here. Format: { distance, time, stepList[string], stepIconsString[int] }
-        var routeData = {};
-        // Get the summary
-        routeData.distance = Math.ceil(res.route.distance * 1000); /* in meters */
-        routeData.time = Math.ceil(res.route.time / 60); /* in minutes */
-        // Get the steps
-        routeData.stepList = [];
-        routeData.stepPositionList = [];
-        routeData.stepIconsString = '';
-        res.route.legs[0].maneuvers.forEach(function(step, index) {
-          // Add the text
-          routeData.stepList[index] = step.narrative;
-          // Add the position
-          routeData.stepPositionList[index] = {
-            lat: step.startPoint.lat,
-            lon: step.startPoint.lng,
-          };
+          // Add the position (start of the step)
+          routeData.stepPositionList.push({
+            lat: step.start_location.lat,
+            lon: step.start_location.lng,
+          });
           // Add the icon
-          if (res.route.legs[0].maneuvers.length == index + 1) {
-            // This is the last step, add the finished icon
-            routeData.stepIconsString = routeData.stepIconsString.concat(icons['final']);
-          } else if (step.hasOwnProperty('turnType')) {
-            // Display the specified icon
-            if (directionMap.length > step.turnType) {
-              routeData.stepIconsString = routeData.stepIconsString.concat(icons[directionMap[step.turnType]]);
-            } else {
-              // Display the travel type icon
-              routeData.stepIconsString = routeData.stepIconsString.concat(icons['type']);
-            }
-          } else {
-            // Display the travel type icon
-            routeData.stepIconsString = routeData.stepIconsString.concat(icons['type']);
-          }
+          routeData.stepIconsString = routeData.stepIconsString.concat(stepIcon(step, icons));
         });
+        // Append an explicit arrival step so the final flag has its own entry
+        routeData.stepList.push('Arrive at '.concat(cleanInstruction(leg.end_address)));
+        routeData.stepPositionList.push({
+          lat: leg.end_location.lat,
+          lon: leg.end_location.lng,
+        });
+        routeData.stepIconsString = routeData.stepIconsString.concat(icons.final);
+        // Add attribution (google's terms require crediting the data source)
+        routeData.stepList.push('Directions powered by Google');
+        routeData.stepIconsString = routeData.stepIconsString.concat(icons.attr);
         // We are done
         callback(true, routeData);
       } catch (e) {
@@ -283,6 +222,7 @@ function loadPublicTransitRouteData(fromLat, fromLon, toLat, toLon, callback) {
       }
     } else {
       // Error
+      if (res) console.log('Directions failed:', res.status);
       routeErrorCallback(callback);
     }
   });
@@ -290,6 +230,11 @@ function loadPublicTransitRouteData(fromLat, fromLon, toLat, toLon, callback) {
 
 // Performs all the steps neccessary to return a complete route (the callback takes: success / route data)
 function createRoute(routeType, searchText, callback) {
+  // Make sure the user has configured a google api key on the settings page
+  if (!getGoogleApiKey()) {
+    console.log('No Google API key set - open the app settings on your phone and paste your key');
+    return routeErrorCallback(callback);
+  }
   // Load the current location
   loadCurrentLocation(function(successCurrentLocation, fromLat, fromLon) {
     console.log('current found:', fromLat, fromLon);
@@ -298,12 +243,8 @@ function createRoute(routeType, searchText, callback) {
       loadLocationForSearch(searchText, fromLat, fromLon, function(successSearchLocation, toLat, toLon) {
         console.log('search found:', toLat, toLon);
         if (successSearchLocation) {
-          // Load a route and pass it the callback (uses different api for public transit)
-          if (routeType != 2) {
-            loadRouteData(routeType, fromLat, fromLon, toLat, toLon, callback);
-          } else {
-            loadPublicTransitRouteData(fromLat, fromLon, toLat, toLon, callback);
-          }
+          // Load a route and pass it the callback (google handles every mode, transit included)
+          loadRouteData(routeType, fromLat, fromLon, toLat, toLon, callback);
         } else {
           routeErrorCallback(callback);
         }
